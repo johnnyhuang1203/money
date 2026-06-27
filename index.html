@@ -18,6 +18,7 @@
   select,input{ width:100%; padding:12px; font-size:16px; border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--txt); }
   .btn{ display:block; width:100%; padding:14px; font-size:16px; font-weight:700; color:#fff; background:var(--green); border:0; border-radius:12px; margin-top:14px; }
   .btn:active{ opacity:.85; } .btn.blue{ background:var(--blue);} .btn.purple{ background:var(--purple);}
+  .btn.red{ background:#e2433a; } .btn.gray{ background:#9aa1ad; } .btn.sm{ padding:10px; font-size:14px; margin-top:0; }
   .hidden{ display:none; }
   .row{ display:flex; gap:10px; } .row>*{ flex:1; }
   h3{ margin:0 0 4px; font-size:16px; } .big{ font-size:26px; font-weight:800; }
@@ -37,8 +38,9 @@
 <header>📒 記帳小幫手</header>
 <div class="tabs">
   <button id="t-add" class="on" onclick="show('add')">＋ 新增消費</button>
-  <button id="t-sum" onclick="show('sum')">∑ 統計加總</button>
-  <button id="t-bill" onclick="show('bill')">🧾 月帳單</button>
+  <button id="t-sum" onclick="show('sum')">∑ 統計</button>
+  <button id="t-bill" onclick="show('bill')">🧾 帳單</button>
+  <button id="t-list" onclick="show('list')">📝 明細</button>
 </div>
 
 <main>
@@ -91,6 +93,11 @@
       <input type="text" id="ccNote" placeholder="餐費">
       <button class="btn purple" onclick="addCC()">記錄信用卡</button>
     </div>
+  </section>
+
+  <section id="p-list" class="hidden">
+    <p class="muted" style="margin:4px 2px 12px">本月紀錄（點「修改」可改細項／金額／備註，或「刪除」移除）</p>
+    <div id="listBox"></div>
   </section>
 </main>
 
@@ -147,12 +154,13 @@
     document.getElementById('photoBox').classList.toggle('hidden', m!=='photo');
   }
   function show(tab){
-    ['add','sum','bill'].forEach(t=>{
+    ['add','sum','bill','list'].forEach(t=>{
       document.getElementById('p-'+t).classList.toggle('hidden', t!==tab);
       document.getElementById('t-'+t).classList.toggle('on', t===tab);
     });
     if(tab==='sum') loadSum();
     if(tab==='bill') loadBill();
+    if(tab==='list') loadList();
   }
 
   async function addExpense(){
@@ -217,6 +225,56 @@
     const r=await api({ action:'cc', userId:USER.id, name:USER.name, card:document.getElementById('ccCard').value, amount:amt, note:document.getElementById('ccNote').value });
     toast(r.ok?'✅ '+r.message:'失敗');
     document.getElementById('ccCard').value=''; document.getElementById('ccAmt').value=''; document.getElementById('ccNote').value=''; loadBill();
+  }
+
+  /* ====== 明細：列出 / 修改 / 刪除 ====== */
+  let RECORDS = [];
+  async function loadList(){
+    const box=document.getElementById('listBox'); box.innerHTML='<div class="card muted">載入中…</div>';
+    const r=await api({ action:'list', userId:USER.id }); RECORDS=r.data||[]; renderList();
+  }
+  function renderList(){
+    const box=document.getElementById('listBox');
+    if(!RECORDS.length){ box.innerHTML='<div class="card muted">本月尚無紀錄</div>'; return; }
+    box.innerHTML = RECORDS.map((r,i)=>recCard(r,i)).join('');
+  }
+  function recCard(r,i){
+    return '<div class="card" id="rec'+i+'">'
+      +'<div class="catline"><b>'+r.cat.replace('開支','')+'－'+r.sub+'</b><b>NT$'+fmt(r.amount)+'</b></div>'
+      +'<div class="muted">'+r.time+(r.note?' · '+r.note:'')+'</div>'
+      +'<div class="row" style="margin-top:10px">'
+      +'<button class="btn blue sm" onclick="editRec('+i+')">✏️ 修改</button>'
+      +'<button class="btn red sm" onclick="delRec('+i+')">🗑 刪除</button>'
+      +'</div></div>';
+  }
+  async function delRec(i){
+    const r=RECORDS[i];
+    if(!confirm('確定刪除這筆？\n'+r.cat.replace('開支','')+'－'+r.sub+'　NT$'+fmt(r.amount))) return;
+    const res=await api({ action:'delete', userId:USER.id, id:r.id });
+    toast(res.ok?'已刪除':'刪除失敗'); loadList();
+  }
+  function editRec(i){
+    const r=RECORDS[i], subs=SUB[r.cat]||[];
+    const subField = subs.length
+      ? '<select id="es'+i+'">'+subs.map(s=>'<option'+(s===r.sub?' selected':'')+'>'+s+'</option>').join('')+'</select>'
+      : '<input id="es'+i+'" value="'+(r.sub||'')+'">';
+    document.getElementById('rec'+i).innerHTML =
+       '<div class="muted">'+r.cat.replace('開支','')+'</div>'
+      +'<label>細項</label>'+subField
+      +'<label>金額</label><input type="number" id="ea'+i+'" value="'+r.amount+'">'
+      +'<label>備註</label><input type="text" id="en'+i+'" value="'+(r.note||'')+'">'
+      +'<div class="row" style="margin-top:10px">'
+      +'<button class="btn sm" onclick="saveRec('+i+')">儲存</button>'
+      +'<button class="btn gray sm" onclick="renderList()">取消</button></div>';
+  }
+  async function saveRec(i){
+    const r=RECORDS[i];
+    const sub=document.getElementById('es'+i).value;
+    const amt=parseFloat(document.getElementById('ea'+i).value);
+    const note=document.getElementById('en'+i).value;
+    if(!amt||amt<=0){ toast('金額需大於 0'); return; }
+    const res=await api({ action:'update', userId:USER.id, id:r.id, cat:r.cat, sub:sub, amount:amt, note:note });
+    toast(res.ok?'已更新':'更新失敗'); loadList();
   }
 
   function fmt(n){ return Number(n||0).toLocaleString('en-US'); }
